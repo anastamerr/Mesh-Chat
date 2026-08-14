@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mesh Phase 0 Probe</string>
+    <string name="run_probe">Run 12-second BLE probe</string>
+    <string name="probe_running">BLE probe running…</string>
+    <string name="permission_denied">Nearby-device permission denied. The runtime probe cannot run.</string>
+    <string name="status_and_report">%1$s\n\n%2$s</string>
+</resources>

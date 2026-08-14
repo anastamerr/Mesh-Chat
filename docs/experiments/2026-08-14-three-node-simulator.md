@@ -44,7 +44,7 @@ Verified behavior:
 - A later viable copy of that message can still cross B, preventing exhausted-path deduplication poisoning.
 - Packet type and message ID jointly identify a network packet, allowing an acknowledgement to bind to the original message ID.
 
-The full repository test run contains 16 passing tests: five codec, four HPKE candidate, four Ed25519 candidate, and three simulator tests.
+The initial experiment run contained 16 passing tests. The scenario now consumes the production `mesh-crypto` boundary; current repository totals are recorded in the Phase 0 findings.
 
 The simulator production runtime contains only Kotlin stdlib and `mesh-protocol`. Tink is present exclusively in the test configuration.
 
@@ -55,6 +55,6 @@ The simulator production runtime contains only Kotlin stdlib and `mesh-protocol`
 - Persistent recovery after process termination
 - Packet loss, delay, partitions, or store-carry-forward encounters
 - Multipath selection or adaptive routing
-- Final cross-platform cryptographic serialization
+- Android execution of the now-frozen cross-platform cryptographic format
 
-These remain separate experiments. They are not simulated conclusions.
+Kotlin–Swift serialization was resolved in the later [cryptographic interoperability experiment](2026-08-14-crypto-interoperability.md). The other limits remain separate experiments; they are not simulated conclusions.

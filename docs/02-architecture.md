@@ -44,9 +44,15 @@ Higher layers must not depend on BLE-specific concepts such as GATT characterist
 
 The `mesh-engine` module owns transport-independent node behavior and a narrow `PacketStore` boundary. Its JVM `DirectoryPacketStore` writes canonical packet bytes through a forced temporary file and atomic rename, rejects corrupt state, and applies one hard item/byte limit across queues, deliveries, and receipts. Receipt persistence precedes outbox removal so reconstruction resolves an interrupted confirmation safely.
 
+The `mesh-crypto` module owns the end-to-end cryptography boundary. Its public API exposes project-owned identities, metadata, and typed open results; no Tink keyset, primitive, or serialization type crosses the boundary. Public and private keys use fixed 32-byte raw representations.
+
+The `mesh-crypto-android` adapter protects that raw material at rest with a non-exportable Android Keystore AES-256-GCM key and an atomic no-backup file. It reports whether the master key is software-, TEE-, or StrongBox-backed without requiring StrongBox. Raw identity keys necessarily enter the native process when Tink reconstructs HPKE and Ed25519 primitives; the claim is protected storage at rest, not hardware-isolated message signing.
+
 The `mesh-simulator` module supplies deterministic, explicit links between isolated `MeshNode` instances. Every virtual transmission crosses a link as bytes encoded and decoded by `mesh-protocol`; nodes do not share packet objects, stores, or routing state.
 
-The simulator intentionally implements only the single-copy forwarding policy needed for the A–B–C proof. It is evidence for packet, relay, persistent deduplication, encryption, authenticated acknowledgement, and store-carry-forward behavior—not evidence for BLE discovery, range, background execution, or battery use.
+Its test source set also contains a deliberately small loopback harness. It launches A, B, and C as separate JVM processes, moves canonical packet bytes over TCP, and forcibly terminates B before reconstructing it from the same store. This harness is process-isolation evidence only: it is not a production transport and is excluded from the module's runtime artifact.
+
+The simulator intentionally implements only the single-copy forwarding policy needed for the A–B–C proof. Its encrypted scenarios now consume `mesh-crypto` rather than assembling test-only primitives. It is evidence for packet, relay, persistent deduplication, encryption, authenticated acknowledgement, store-carry-forward, and ordinary process-restart behavior—not evidence for BLE discovery, range, background execution, or battery use.
 
 ## Android proof-of-concept components
 

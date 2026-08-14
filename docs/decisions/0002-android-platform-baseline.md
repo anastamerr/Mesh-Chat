@@ -21,7 +21,7 @@ The first experiment uses:
 - No Companion Device Manager association
 - No Android background service until foreground multi-hop passes
 
-The build baseline is JDK 17. The intended Android build pairing is AGP 9.2.x with Gradle 9.4.1. Exact patch versions remain pinned and updated deliberately rather than through dynamic dependency ranges.
+The build baseline is JDK 17.0.20, AGP 9.2.0, Gradle 9.4.1, stable Android API 36, and Build Tools 36.0.0. Exact versions remain pinned and updated deliberately rather than through dynamic dependency ranges. API 37 is still treated as a preview and is not adopted merely to silence an update check.
 
 ## Capability gate
 
@@ -34,6 +34,8 @@ A device can act as a full Phase 1 relay only if it supports:
 - GATT server and client operations used by the protocol
 
 Unsupported capabilities produce an explicit in-app diagnostic. They must not fail silently.
+
+The Phase 0 probe also records service discovery, negotiated ATT MTU, a response-confirmed GATT write, and receipt of that write by the peer's GATT server. Static feature flags alone do not pass the gate.
 
 ## Consequences
 

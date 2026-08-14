@@ -1,9 +1,9 @@
 # Protocol v0 Design
 
-**Status:** Logical design with frozen Phase 0 routed-packet header
-**Last updated:** 2026-08-13
+**Status:** Frozen Phase 0 packet, cryptographic binding, and private-envelope formats
+**Last updated:** 2026-08-14
 
-This document captures the logical protocol required for the first experiment. The routed-packet header and golden vector are now frozen for Phase 0 testing. Cryptographic payload encoding and BLE fragmentation remain open until their dedicated experiments pass.
+This document captures the logical protocol required for the first experiment. The routed-packet header, cryptographic bindings, private-message envelope, and Kotlin–Swift vectors are frozen for Phase 0 testing. BLE fragmentation remains open until its dedicated experiment passes.
 
 ## Frozen routed-packet header
 
@@ -159,7 +159,29 @@ Before selection, compare candidates for:
 - License compatibility
 - Cross-platform Swift support or reproducibility
 
-All cryptographic formats require golden test vectors before iOS implementation begins.
+### Private-message cryptographic format v0
+
+The selected Phase 0 suite is RFC 9180 base-mode HPKE using X25519/HKDF-SHA256/AES-256-GCM, with Ed25519 authenticating the sender inside the encrypted envelope.
+
+HPKE key-schedule context contains a domain, protocol version, packet type, message ID, recipient routing token, and creation/expiration times. Hop and copy budgets are excluded because relays must change them without breaking end-to-end authentication.
+
+The signed private-message content contains a separate domain, the same immutable metadata, the recipient's raw 32-byte X25519 public key, the sender's raw 32-byte Ed25519 public key, the plaintext length, and plaintext. The signed content is sealed inside HPKE.
+
+The decrypted envelope is:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 1 | Protocol version (`0`) |
+| 1 | 32 | Raw Ed25519 sender public key |
+| 33 | 64 | Ed25519 signature |
+| 97 | 4 | Unsigned plaintext length, big-endian |
+| 101 | variable | UTF-8 application plaintext |
+
+The maximum plaintext is 16,235 bytes so the 101-byte envelope, 32-byte X25519 encapsulation, and 16-byte AES-GCM tag fit the routed packet's 16 KiB payload bound.
+
+Delivery acknowledgements sign a distinct domain plus protocol version, acknowledgement type, original message ID, sender routing token, and acknowledgement timestamps. Signature byte equality is never a protocol invariant; implementations verify signatures because valid Ed25519 implementations may randomize signing.
+
+Raw X25519 and Ed25519 keys are exactly 32 bytes. Tink keyset serialization is neither a wire format nor an interoperability contract. Frozen bidirectional Tink/CryptoKit vectors live in `test-vectors/crypto-v0.properties`.
 
 ## Versioning
 

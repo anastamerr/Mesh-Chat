@@ -51,7 +51,7 @@ Prove that an encrypted packet can enter an offline relay, survive reconstructio
 
 The 100-message scenario creates 100 distinct HPKE ciphertexts while C is unavailable, retains all 100 at B, connects B to C, decrypts every recipient delivery, and confirms 100 unique message IDs.
 
-The production runtime graphs contain only Kotlin stdlib and project modules. Tink remains test-scoped; no database, coroutine, dependency-injection, or serialization framework was introduced.
+At this checkpoint, the production runtime graphs contained only Kotlin stdlib and project modules and Tink remained test-scoped. The later cryptographic interoperability checkpoint moved Tink into its own production module without adding it to the engine.
 
 ## Review findings incorporated
 
@@ -66,9 +66,9 @@ The post-implementation review resulted in these changes before acceptance:
 
 ## Limits of the evidence
 
-- Cryptographic primitives are still test-scoped pending a frozen cross-platform format.
+- The then-open cross-platform cryptographic format is now covered by the [Kotlin–Swift interoperability experiment](2026-08-14-crypto-interoperability.md).
 - The directory store assumes one process owner per node directory.
 - The test covers ordinary process reconstruction, not sudden power loss or storage hardware failure.
 - Relay copies are retained until expiry because relay-side acknowledgement authentication/deletion is not yet defined.
-- Nodes still execute in one JVM; operating-system process isolation is the next hardware-free proof.
+- Operating-system process isolation is covered separately by the [multi-process loopback experiment](2026-08-14-multi-process-loopback.md).
 - Packet loss, randomized delay, concurrency, BLE, Android lifecycle, and battery behavior remain untested.

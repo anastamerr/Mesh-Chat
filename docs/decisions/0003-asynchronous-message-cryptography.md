@@ -1,6 +1,6 @@
 # ADR 0003: Asynchronous Message Cryptography
 
-**Status:** Proposed; acceptance requires interoperability tests
+**Status:** Accepted for Phase 1
 **Date:** 2026-08-13
 
 ## Context
@@ -9,7 +9,7 @@ Store-carry-forward delivery must encrypt a message when the recipient is not co
 
 The construction must be standardized, maintained on Android, reproducible on iOS, and separated from packet routing.
 
-## Proposed decision
+## Decision
 
 Use RFC 9180 HPKE for the Phase 1 sealed-message primitive with:
 
@@ -19,7 +19,7 @@ Use RFC 9180 HPKE for the Phase 1 sealed-message primitive with:
 
 Use sender signatures for authentication, with the signed content placed inside the HPKE plaintext and domain-separated from every other signature use. Ed25519 is the initial signature candidate.
 
-On Android, evaluate Google Tink 1.23.x behind an internal `MessageCrypto` interface. The routing and wire modules must not expose Tink keyset or primitive types.
+On Android, use Google Tink 1.23.x behind the project-owned `MessageCrypto` interface. The routing and wire modules do not expose Tink keyset or primitive types. Cross-platform identities use raw 32-byte X25519 encryption keys and raw 32-byte Ed25519 signing keys; Tink serialization is local implementation detail only.
 
 ## Security properties and limitations
 
@@ -42,6 +42,10 @@ This decision becomes accepted only when tests prove:
 6. Stable public-key serialization
 7. Frozen golden vectors
 8. Swift/CryptoKit interoperability using the same RFC 9180 suite and wire representation
+
+Items 1–8 pass. The frozen bidirectional CryptoKit/Tink ciphertexts and Ed25519 verification pass on the JVM and inside an API 36 Android process; Android also generates fresh keys and completes an authenticated encrypt/decrypt round trip. The workstation Swift toolchain remains the independent interoperability implementation.
+
+Android stores the raw cross-platform identity through `mesh-crypto-android`: a non-exportable Android Keystore AES-256-GCM master key encrypts an atomic no-backup identity file. Tampering and loss of the master key fail closed. Hardware backing is reported rather than assumed, and user authentication is not required because opportunistic messaging must operate while the foreground mesh is active without a prompt per message.
 
 If Tink adds an incompatible prefix or key representation, the adapter must use documented raw-key behavior or the choice must be reconsidered. Tink-specific wire formats must not become the protocol accidentally.
 

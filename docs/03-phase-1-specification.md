@@ -113,3 +113,5 @@ Before scaffolding the Kotlin project, confirm:
 - Maintained cryptographic library and protocol choice
 - Packet size and fragmentation constraints from real devices
 - Test method for preventing a direct A-to-C link
+
+As of 2026-08-14, the API baseline, maintained cryptography, canonical packet limits, foreground-only Phase 1 scope, Android runtime, and written topology procedure are resolved. The available hardware was not present, so central/peripheral concurrency, negotiated MTU on each chipset, the final fragmentation payload, and the physical A–B–C placement remain the only open pre-implementation evidence. They are tracked in the [Phase 0 physical-device matrix](11-phase-0-device-matrix.md).

@@ -1,28 +1,23 @@
 # Phase 0 Findings
 
-**Status:** In progress
+**Status:** Software-complete; physical-device evidence pending
 **Last updated:** 2026-08-14
 
 ## Local toolchain audit
 
-The development machine currently has:
+The development machine now has:
 
 - Apple silicon (`arm64`)
 - macOS 26.5.1
 - Apple command-line developer tools
+- Eclipse Temurin JDK 17.0.20+8 installed in the standard per-user Java directory
+- Pinned Gradle wrapper 9.4.1 with distribution URL validation and checksum
+- Android command-line tools 22.0, installed from Google's ARM64 archive after matching its published SHA-256
+- Android SDK Platform 36 revision 2 and Build Tools 36.0.0
+- Platform Tools and adb 37.0.1
+- Android Emulator 37.1.11 and the API 36 ARM64 AOSP Automated Test Device image
 
-The normal shell does not currently expose:
-
-- A permanently installed Java runtime or JDK
-- A permanently installed Gradle distribution
-- Kotlin compiler
-- Android SDK
-- `adb`
-- Android Studio
-
-For Phase 0, checksum-verified temporary distributions of Eclipse Temurin JDK 17.0.20+8 and Gradle 9.4.1 were used. The Gradle wrapper is now committed with distribution URL validation and the official distribution checksum. This makes the JVM build definition reproducible without pretending the permanent Android workstation setup is complete.
-
-Android compilation and physical-device tests still require the Android SDK, platform tools, and real phones.
+The permanent toolchain runs the clean JVM suite, Android compilation, strict lint, APK/AAR packaging, and connected instrumentation tests. Android Studio is optional for this command-line experiment. Real phones remain necessary for radio evidence.
 
 ## Android BLE findings
 
@@ -30,7 +25,7 @@ Official Android guidance supports the following decisions:
 
 - BLE scanning and advertising are available from API 21, but advertising support remains a runtime hardware capability and must be checked through `isMultipleAdvertisementSupported()`.
 - Android 12/API 31 introduced runtime `BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, and `BLUETOOTH_CONNECT` permissions.
-- When scan results are not used to derive location, `BLUETOOTH_SCAN` can declare `neverForLocation`; this can filter some beacons and must be validated against our service advertisement.
+- `BLUETOOTH_SCAN` can declare `neverForLocation`, but Android warns that doing so filters some beacons. The Phase 0 capability probe deliberately avoids the flag until the discovery design has physical evidence.
 - A process must remain alive for ordinary callback-based scanning. A filtered `PendingIntent` scan can wake a stopped process in later background work.
 - Long-lived connections may use a `connectedDevice` foreground service, subject to modern foreground-service restrictions.
 - Companion-device APIs are oriented toward explicit associations with peripherals and are not the initial choice for an ad-hoc phone mesh.
@@ -42,6 +37,10 @@ Primary references:
 - [BluetoothAdapter capabilities](https://developer.android.com/reference/android/bluetooth/BluetoothAdapter)
 - [BluetoothLeAdvertiser limits](https://developer.android.com/reference/android/bluetooth/le/BluetoothLeAdvertiser.html)
 
+The `android-probe` app now performs the runtime gate directly. It reports static adapter features, concurrently scans and advertises a private probe service, publishes a writable GATT characteristic, discovers and connects to one peer, requests ATT MTU 517, performs a response-confirmed write, and records receipt on the peer server. Unsupported hardware remains installable because Bluetooth features are optional in the manifest and failures appear in the report.
+
+Two API 36 emulators accepted concurrent scanning, advertising, and GATT-server publication with no API failure, but did not discover each other through BLE netsim. This is useful Android-stack evidence only; it does not pass the physical radio gate.
+
 ## Platform baseline
 
 The proposed Android baseline is:
@@ -51,10 +50,10 @@ The proposed Android baseline is:
 - `targetSdk = 36`
 - JDK 17
 - Kotlin 2.3.21
-- Android Gradle Plugin 9.2.x when the Android app module is added
+- Android Gradle Plugin 9.2.0 with built-in Kotlin
 - Gradle 9.4.1 for AGP 9.2 compatibility
 
-The pure protocol module uses no Android API. The Android adapter will detect BLE advertising, scanning, MTU, PHY, and Wi-Fi capabilities at runtime rather than inferring them from OS version.
+The pure protocol module uses no Android API. The Android probe detects BLE advertising, scanning, MTU, PHY, and GATT capabilities at runtime rather than inferring them from OS version. API 37 remains a preview, so strict lint suppresses only the checks whose entire finding is that the preview exists.
 
 ## Cryptography findings
 
@@ -74,7 +73,9 @@ Primary references:
 - [Tink digital signatures](https://developers.google.com/tink/digital-signature)
 - [Apple CryptoKit HPKE](https://developer.apple.com/documentation/cryptokit/hpke)
 
-Test-scoped Tink 1.23.0 experiments now pass for HPKE round trip, wrong-recipient rejection, ciphertext tampering, and authenticated-context tampering. Ed25519 candidate tests also pass for valid verification and rejection of changed content, changed signatures, and wrong-sender keys. This is evidence for the primitive choices, not acceptance of the cryptographic protocol. Canonical signed-content encoding, raw key serialization, frozen cross-platform vectors, and Swift interoperability remain unresolved.
+The `mesh-crypto` module now implements the library-neutral `MessageCrypto` boundary with Tink 1.23.0 behind it. Canonical domain-separated context, signed-content, and encrypted-envelope formats are dependency-free in `mesh-protocol`. Fixed 32-byte raw X25519 and Ed25519 keys reconstruct successfully, while mismatched pairs fail closed. Frozen ciphertexts pass bidirectionally: Tink opens the CryptoKit vector and CryptoKit opens the Tink vector. Wrong recipients, modified ciphertext/context, wrong senders, invalid signatures, malformed envelopes, oversized input, and modified acknowledgements are rejected.
+
+The same fixture now passes inside an API 36 Android process, together with fresh Android key generation and authenticated seal/open. The `mesh-crypto-android` adapter encrypts raw identity material in an atomic no-backup file using a non-exportable Android Keystore AES-256-GCM master key. Its device tests prove persistence, absence of raw private keys on disk, non-exportability, tamper rejection, and fail-closed behavior when the master key is missing. The cryptography decision is accepted for Phase 1, subject to its documented lack of post-compromise forward secrecy.
 
 ## Protocol work completed
 
@@ -133,20 +134,32 @@ A clean, offline JVM build passes with:
 - Kotlin explicit API mode
 - Compiler warnings treated as errors
 - Five canonical packet codec tests
-- Four HPKE-candidate behavior tests
-- Four Ed25519 sender-signature candidate tests
+- Eight canonical cryptographic binding/envelope tests
+- Eight production crypto-boundary and interoperability tests
 - Eleven durable engine/storage tests
 - Five deterministic A–B–C simulator tests
+- One process-isolated A–B–C recovery test
 - Zero skipped tests, failures, or errors
 
-The current clean run contains 29 tests. Detailed records are in the [Phase 0 JVM experiment report](experiments/2026-08-13-phase-0-jvm.md), [three-node simulator experiment](experiments/2026-08-14-three-node-simulator.md), and [durable store-and-forward experiment](experiments/2026-08-14-durable-store-forward.md).
+The current clean run contains 38 tests. Detailed records are in the [Phase 0 JVM experiment report](experiments/2026-08-13-phase-0-jvm.md), [three-node simulator experiment](experiments/2026-08-14-three-node-simulator.md), [durable store-and-forward experiment](experiments/2026-08-14-durable-store-forward.md), [multi-process loopback experiment](experiments/2026-08-14-multi-process-loopback.md), and [Kotlin–Swift interoperability experiment](experiments/2026-08-14-crypto-interoperability.md).
 
-## Remaining Phase 0 gates
+## Android verification completed
 
-- Establish the permanent JDK 17 workstation setup.
-- Install the Android SDK and platform tools.
-- Inventory at least three physical Android test devices.
-- Run a BLE capability probe on each device.
-- Define canonical signed-content encoding and a production crypto adapter boundary.
-- Freeze cryptographic and packet golden vectors.
-- Record observed advertisement, connection, and payload limits.
+- One local Android report-format test passes.
+- Two API 36 cryptographic instrumentation tests pass.
+- Three API 36 Android Keystore identity tests pass.
+- Strict lint reports zero issues for both Android modules.
+- The probe debug APK is 908 KiB and has no AndroidX or other application runtime dependency.
+- The protected identity adapter AAR is 12 KiB and depends only on the existing crypto module.
+
+Full details and evidence limits are in the [Android runtime and BLE probe experiment](experiments/2026-08-14-android-runtime.md).
+
+## Remaining Phase 0 gate
+
+Only physical radio evidence remains:
+
+- Inventory at least three physical Android phones.
+- Run the probe pairwise and record advertisement, connection, MTU, GATT-write, and Keystore results.
+- Establish fixed A/B/C positions where A–B and B–C work repeatedly while A–C does not form a session.
+
+No phone was attached to adb on 2026-08-14. The exact procedure and unfilled evidence table are in the [Phase 0 physical-device matrix](11-phase-0-device-matrix.md). Phase 0 must not be marked complete until that table contains real measurements.

@@ -47,6 +47,10 @@ Phone A  ->  Phone B  ->  Phone C
 - [Phase 0 JVM experiment report](docs/experiments/2026-08-13-phase-0-jvm.md)
 - [Three-node simulator experiment](docs/experiments/2026-08-14-three-node-simulator.md)
 - [Durable store-and-forward experiment](docs/experiments/2026-08-14-durable-store-forward.md)
+- [Multi-process loopback experiment](docs/experiments/2026-08-14-multi-process-loopback.md)
+- [Kotlin–Swift cryptographic interoperability experiment](docs/experiments/2026-08-14-crypto-interoperability.md)
+- [Android runtime and BLE probe experiment](docs/experiments/2026-08-14-android-runtime.md)
+- [Phase 0 physical-device matrix](docs/11-phase-0-device-matrix.md)
 - [Decision record: Android-first native mesh](docs/decisions/0001-android-first-native-mesh.md)
 - [Decision record: Android platform baseline](docs/decisions/0002-android-platform-baseline.md)
 - [Decision record: asynchronous message cryptography](docs/decisions/0003-asynchronous-message-cryptography.md)
@@ -89,6 +93,14 @@ With JDK 17 available:
 
 Omit `--offline` only when resolving pinned dependencies for the first time.
 
+With the Android SDK installed, the probe and protected identity adapter are checked with:
+
+```shell
+./gradlew :android-probe:testDebugUnitTest :android-probe:lintDebug :android-probe:assembleDebug
+./gradlew :android-probe:connectedDebugAndroidTest
+./gradlew :mesh-crypto-android:lintDebug :mesh-crypto-android:connectedDebugAndroidTest
+```
+
 ## Status
 
-Phase 0 is active. `mesh-protocol` owns canonical packet encoding, `mesh-engine` owns bounded durable node state and store-and-forward decisions, and `mesh-simulator` supplies deterministic byte-level links. The JVM proof now covers an offline relay, relay and recipient reconstruction, authenticated delivery state, and 100 encrypted messages. A clean offline build passes 29 tests with strict explicit-API and warnings-as-errors checks. Android radio work remains gated on the Android SDK and a physical-device capability matrix.
+Phase 0 is software-complete and awaiting physical radio evidence. `mesh-protocol` owns canonical formats; `mesh-crypto` owns the Tink-backed HPKE/Ed25519 boundary; `mesh-crypto-android` protects raw identity material with Android Keystore; `mesh-engine` owns bounded durable store-and-forward state; and `mesh-simulator` supplies deterministic byte-level links. The clean JVM suite passes 38 tests, Android adds one local probe test and five API 36 instrumentation tests, and the frozen vectors pass in Kotlin/JVM, Android, and Swift/CryptoKit. The Android SDK, adb, emulator, BLE capability app, protected storage, and repeatable device procedure are ready. Phase 0 cannot exit until three physical phones fill the capability matrix and establish a reproducible A–B–C topology.

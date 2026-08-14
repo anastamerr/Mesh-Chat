@@ -1,5 +1,10 @@
 package chat.mesh.simulator
 
+import chat.mesh.crypto.MessageCrypto
+import chat.mesh.crypto.MessageOpenRejection
+import chat.mesh.crypto.MessageOpenResult
+import chat.mesh.crypto.PublicIdentity
+import chat.mesh.crypto.TinkMessageCrypto
 import chat.mesh.engine.AcknowledgementVerifier
 import chat.mesh.engine.DirectoryPacketStore
 import chat.mesh.engine.MeshNode
@@ -7,43 +12,25 @@ import chat.mesh.engine.PacketStoreLimits
 import chat.mesh.engine.ReceiveRejection
 import chat.mesh.engine.ReceiveResult
 import chat.mesh.protocol.FixedBytes16
+import chat.mesh.protocol.MessageMetadata
 import chat.mesh.protocol.PacketCodecV0
 import chat.mesh.protocol.PacketType
 import chat.mesh.protocol.RoutedPacket
-import com.google.crypto.tink.HybridDecrypt
-import com.google.crypto.tink.HybridEncrypt
-import com.google.crypto.tink.KeysetHandle
-import com.google.crypto.tink.PublicKeySign
-import com.google.crypto.tink.PublicKeyVerify
-import com.google.crypto.tink.RegistryConfiguration
-import com.google.crypto.tink.hybrid.HpkeParameters
-import com.google.crypto.tink.hybrid.HybridConfig
-import com.google.crypto.tink.signature.Ed25519Parameters
-import com.google.crypto.tink.signature.SignatureConfig
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
 import java.nio.file.Path
-import java.security.GeneralSecurityException
 import java.util.Comparator
 import kotlin.test.AfterTest
-import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class ThreeNodeMeshTest {
     private val temporaryRoots = mutableListOf<Path>()
-
-    @BeforeTest
-    fun registerCryptography() {
-        HybridConfig.register()
-        SignatureConfig.register()
-    }
 
     @AfterTest
     fun removeTemporaryStores() {
@@ -56,15 +43,23 @@ class ThreeNodeMeshTest {
 
     @Test
     fun `sealed message and authenticated acknowledgement cross the required relay`() {
-        val relayIdentity = TestIdentity()
-        val recipientIdentity = TestIdentity()
+        val senderIdentity = TinkMessageCrypto.generate()
+        val relayIdentity = TinkMessageCrypto.generate()
+        val recipientIdentity = TinkMessageCrypto.generate()
         val fixture = threeNodeMesh(
-            senderVerifier = acknowledgementVerifier(recipientIdentity),
+            senderVerifier = acknowledgementVerifier(
+                senderIdentity,
+                recipientIdentity.publicIdentity,
+            ),
         )
         val messageId = fixedBytes(0x40)
         val plaintext = "offline through one relay".encodeToByteArray()
-        val context = packetContext(messageId)
-        val ciphertext = recipientIdentity.encryptor.encrypt(plaintext, context)
+        val metadata = metadata(messageId, RECIPIENT_TOKEN)
+        val ciphertext = senderIdentity.sealPrivateMessage(
+            metadata,
+            recipientIdentity.publicIdentity,
+            plaintext,
+        )
 
         fixture.mesh.originate(
             SENDER_TOKEN,
@@ -83,21 +78,28 @@ class ThreeNodeMeshTest {
         assertTrue(fixture.relay.deliveries().isEmpty())
 
         val deliveredMessage = fixture.recipient.deliveries().single()
-        assertContentEquals(
-            plaintext,
-            recipientIdentity.decryptor.decrypt(deliveredMessage.copyPayload(), context),
+        val opened = assertIs<MessageOpenResult.Success>(
+            recipientIdentity.openPrivateMessage(
+                metadata,
+                senderIdentity.publicIdentity,
+                deliveredMessage.copyPayload(),
+            ),
         )
-        assertFailsWith<GeneralSecurityException> {
-            relayIdentity.decryptor.decrypt(deliveredMessage.copyPayload(), context)
-        }
+        assertContentEquals(plaintext, opened.copyPlaintext())
+        assertEquals(
+            MessageOpenResult.Rejected(MessageOpenRejection.DECRYPTION_FAILED),
+            relayIdentity.openPrivateMessage(
+                metadata,
+                senderIdentity.publicIdentity,
+                deliveredMessage.copyPayload(),
+            ),
+        )
 
         val forgedAcknowledgement = packet(
             type = PacketType.DELIVERY_ACK,
             messageId = messageId,
             recipientToken = SENDER_TOKEN,
-            payload = relayIdentity.signer.sign(
-                acknowledgementContent(messageId),
-            ),
+            payload = relayIdentity.signDeliveryAcknowledgement(metadata(messageId, SENDER_TOKEN)),
         )
         val forgedResult = assertIs<ReceiveResult.Rejected>(
             fixture.sender.receive(
@@ -112,7 +114,9 @@ class ThreeNodeMeshTest {
             type = PacketType.DELIVERY_ACK,
             messageId = messageId,
             recipientToken = SENDER_TOKEN,
-            payload = recipientIdentity.signer.sign(acknowledgementContent(messageId)),
+            payload = recipientIdentity.signDeliveryAcknowledgement(
+                metadata(messageId, SENDER_TOKEN),
+            ),
         )
         fixture.mesh.originate(RECIPIENT_TOKEN, acknowledgement)
 
@@ -148,22 +152,30 @@ class ThreeNodeMeshTest {
 
     @Test
     fun `offline relay recovers from disk and later completes authenticated delivery`() {
-        val relayIdentity = TestIdentity()
-        val recipientIdentity = TestIdentity()
+        val senderIdentity = TinkMessageCrypto.generate()
+        val relayIdentity = TinkMessageCrypto.generate()
+        val recipientIdentity = TinkMessageCrypto.generate()
         val fixture = threeNodeMesh(
-            senderVerifier = acknowledgementVerifier(recipientIdentity),
+            senderVerifier = acknowledgementVerifier(
+                senderIdentity,
+                recipientIdentity.publicIdentity,
+            ),
             connectRecipient = false,
         )
         val messageId = fixedBytes(0x60)
         val plaintext = "survives relay reconstruction".encodeToByteArray()
-        val context = packetContext(messageId)
+        val metadata = metadata(messageId, RECIPIENT_TOKEN)
         fixture.mesh.originate(
             SENDER_TOKEN,
             packet(
                 PacketType.PRIVATE_MESSAGE,
                 messageId,
                 RECIPIENT_TOKEN,
-                recipientIdentity.encryptor.encrypt(plaintext, context),
+                senderIdentity.sealPrivateMessage(
+                    metadata,
+                    recipientIdentity.publicIdentity,
+                    plaintext,
+                ),
             ),
         )
 
@@ -181,13 +193,22 @@ class ThreeNodeMeshTest {
         fixture.mesh.connect(RELAY_TOKEN, RECIPIENT_TOKEN)
         assertEquals(1, fixture.mesh.runUntilIdle())
         val delivered = fixture.recipient.deliveries().single()
-        assertContentEquals(
-            plaintext,
-            recipientIdentity.decryptor.decrypt(delivered.copyPayload(), context),
+        val opened = assertIs<MessageOpenResult.Success>(
+            recipientIdentity.openPrivateMessage(
+                metadata,
+                senderIdentity.publicIdentity,
+                delivered.copyPayload(),
+            ),
         )
-        assertFailsWith<GeneralSecurityException> {
-            relayIdentity.decryptor.decrypt(delivered.copyPayload(), context)
-        }
+        assertContentEquals(plaintext, opened.copyPlaintext())
+        assertEquals(
+            MessageOpenResult.Rejected(MessageOpenRejection.DECRYPTION_FAILED),
+            relayIdentity.openPrivateMessage(
+                metadata,
+                senderIdentity.publicIdentity,
+                delivered.copyPayload(),
+            ),
+        )
 
         fixture.mesh.originate(
             RECIPIENT_TOKEN,
@@ -195,7 +216,7 @@ class ThreeNodeMeshTest {
                 PacketType.DELIVERY_ACK,
                 messageId,
                 SENDER_TOKEN,
-                recipientIdentity.signer.sign(acknowledgementContent(messageId)),
+                recipientIdentity.signDeliveryAcknowledgement(metadata(messageId, SENDER_TOKEN)),
             ),
         )
         assertEquals(2, fixture.mesh.runUntilIdle())
@@ -230,7 +251,8 @@ class ThreeNodeMeshTest {
 
     @Test
     fun `one hundred messages survive an offline relay queue`() {
-        val recipientIdentity = TestIdentity()
+        val senderIdentity = TinkMessageCrypto.generate()
+        val recipientIdentity = TinkMessageCrypto.generate()
         val fixture = threeNodeMesh(connectRecipient = false)
         repeat(MESSAGE_COUNT) { index ->
             val messageId = indexedMessageId(index)
@@ -240,9 +262,10 @@ class ThreeNodeMeshTest {
                     PacketType.PRIVATE_MESSAGE,
                     messageId,
                     RECIPIENT_TOKEN,
-                    recipientIdentity.encryptor.encrypt(
+                    senderIdentity.sealPrivateMessage(
+                        metadata(messageId, RECIPIENT_TOKEN),
+                        recipientIdentity.publicIdentity,
                         "message-$index".encodeToByteArray(),
-                        packetContext(messageId),
                     ),
                 ),
             )
@@ -259,13 +282,14 @@ class ThreeNodeMeshTest {
             fixture.recipient.deliveries().map { it.messageId }.distinct().size,
         )
         fixture.recipient.deliveries().forEachIndexed { index, delivered ->
-            assertContentEquals(
-                "message-$index".encodeToByteArray(),
-                recipientIdentity.decryptor.decrypt(
+            val opened = assertIs<MessageOpenResult.Success>(
+                recipientIdentity.openPrivateMessage(
+                    metadata(delivered.messageId, RECIPIENT_TOKEN),
+                    senderIdentity.publicIdentity,
                     delivered.copyPayload(),
-                    packetContext(delivered.messageId),
                 ),
             )
+            assertContentEquals("message-$index".encodeToByteArray(), opened.copyPlaintext())
         }
     }
 
@@ -299,22 +323,21 @@ class ThreeNodeMeshTest {
         acknowledgementVerifier = verifier,
     )
 
-    private fun acknowledgementVerifier(identity: TestIdentity): AcknowledgementVerifier =
+    private fun acknowledgementVerifier(
+        verifier: MessageCrypto,
+        expectedSigner: PublicIdentity,
+    ): AcknowledgementVerifier =
         AcknowledgementVerifier { acknowledgement ->
-            try {
-                identity.verifier.verify(
-                    acknowledgement.copyPayload(),
-                    acknowledgementContent(
-                        messageId = acknowledgement.messageId,
-                        recipientToken = acknowledgement.recipientToken,
-                        createdAtEpochMillis = acknowledgement.createdAtEpochMillis,
-                        expiresAtEpochMillis = acknowledgement.expiresAtEpochMillis,
-                    ),
-                )
-                true
-            } catch (_: GeneralSecurityException) {
-                false
-            }
+            verifier.verifyDeliveryAcknowledgement(
+                metadata = MessageMetadata(
+                    messageId = acknowledgement.messageId,
+                    recipientToken = acknowledgement.recipientToken,
+                    createdAtEpochMillis = acknowledgement.createdAtEpochMillis,
+                    expiresAtEpochMillis = acknowledgement.expiresAtEpochMillis,
+                ),
+                expectedSigner = expectedSigner,
+                signature = acknowledgement.copyPayload(),
+            )
         }
 
     private fun packet(
@@ -334,57 +357,17 @@ class ThreeNodeMeshTest {
         payload = payload,
     )
 
-    private fun packetContext(messageId: FixedBytes16): ByteArray =
-        ByteBuffer.allocate(1 + FixedBytes16.SIZE_BYTES * 2 + Long.SIZE_BYTES * 2)
-            .order(ByteOrder.BIG_ENDIAN)
-            .put(PacketType.PRIVATE_MESSAGE.wireValue.toByte())
-            .put(messageId.copyBytes())
-            .put(RECIPIENT_TOKEN.copyBytes())
-            .putLong(NOW_EPOCH_MILLIS)
-            .putLong(NOW_EPOCH_MILLIS + ONE_MINUTE_MILLIS)
-            .array()
-
-    private fun acknowledgementContent(
+    private fun metadata(
         messageId: FixedBytes16,
-        recipientToken: FixedBytes16 = SENDER_TOKEN,
+        recipientToken: FixedBytes16,
         createdAtEpochMillis: Long = NOW_EPOCH_MILLIS,
         expiresAtEpochMillis: Long = NOW_EPOCH_MILLIS + ONE_MINUTE_MILLIS,
-    ): ByteArray = ByteBuffer
-        .allocate(
-            ACKNOWLEDGEMENT_DOMAIN.size +
-                2 + FixedBytes16.SIZE_BYTES * 2 + Long.SIZE_BYTES * 2,
-        )
-        .order(ByteOrder.BIG_ENDIAN)
-        .put(ACKNOWLEDGEMENT_DOMAIN)
-        .put(0.toByte())
-        .put(PacketType.DELIVERY_ACK.wireValue.toByte())
-        .put(messageId.copyBytes())
-        .put(recipientToken.copyBytes())
-        .putLong(createdAtEpochMillis)
-        .putLong(expiresAtEpochMillis)
-        .array()
-
-    private class TestIdentity {
-        private val encryptionPrivateKeys = KeysetHandle.generateNew(HPKE_PARAMETERS)
-        private val signingPrivateKeys = KeysetHandle.generateNew(ED25519_PARAMETERS)
-
-        val encryptor: HybridEncrypt = encryptionPrivateKeys.publicKeysetHandle.getPrimitive(
-            RegistryConfiguration.get(),
-            HybridEncrypt::class.java,
-        )
-        val decryptor: HybridDecrypt = encryptionPrivateKeys.getPrimitive(
-            RegistryConfiguration.get(),
-            HybridDecrypt::class.java,
-        )
-        val signer: PublicKeySign = signingPrivateKeys.getPrimitive(
-            RegistryConfiguration.get(),
-            PublicKeySign::class.java,
-        )
-        val verifier: PublicKeyVerify = signingPrivateKeys.publicKeysetHandle.getPrimitive(
-            RegistryConfiguration.get(),
-            PublicKeyVerify::class.java,
-        )
-    }
+    ): MessageMetadata = MessageMetadata(
+        messageId = messageId,
+        recipientToken = recipientToken,
+        createdAtEpochMillis = createdAtEpochMillis,
+        expiresAtEpochMillis = expiresAtEpochMillis,
+    )
 
     private data class MeshFixture(
         val mesh: DeterministicMesh,
@@ -402,17 +385,6 @@ class ThreeNodeMeshTest {
         private val RELAY_TOKEN = fixedBytes(0x20)
         private val RECIPIENT_TOKEN = fixedBytes(0x30)
         private val DEFAULT_LIMITS = PacketStoreLimits(maxPackets = 1_000, maxBytes = 1_000_000)
-        private val ACKNOWLEDGEMENT_DOMAIN = "dm:delivery-ack:v0|".encodeToByteArray()
-        private val HPKE_PARAMETERS: HpkeParameters = HpkeParameters.builder()
-            .setKemId(HpkeParameters.KemId.DHKEM_X25519_HKDF_SHA256)
-            .setKdfId(HpkeParameters.KdfId.HKDF_SHA256)
-            .setAeadId(HpkeParameters.AeadId.AES_256_GCM)
-            .setVariant(HpkeParameters.Variant.NO_PREFIX)
-            .build()
-        private val ED25519_PARAMETERS: Ed25519Parameters = Ed25519Parameters.create(
-            Ed25519Parameters.Variant.NO_PREFIX,
-        )
-
         private fun fixedBytes(start: Int): FixedBytes16 = FixedBytes16.from(
             ByteArray(FixedBytes16.SIZE_BYTES) { index -> (start + index).toByte() },
         )

@@ -14,8 +14,16 @@ The roadmap is evidence-driven. A phase advances only when its exit criteria are
 - Create the Kotlin project and automated test foundation.
 - Prove the A–B–C flow in a deterministic byte-level simulator.
 - Prove bounded durable store-and-forward across node reconstruction.
+- Prove A–B–C delivery across separate JVM processes and a forced relay restart.
+- Freeze the v0 cryptographic format and prove bidirectional Kotlin–Swift interoperability.
+- Run the frozen vectors and fresh-key round trip inside Android.
+- Protect the Android identity with a non-exportable Keystore master key.
+- Build the physical BLE capability, MTU, and GATT-write probe.
+- Complete the three-phone physical-device matrix and topology method.
 
-**Exit:** The pre-implementation gates in the Phase 1 specification are resolved.
+**Current state:** Every software and workstation gate passes. The physical-device matrix and real A–B–C placement remain open.
+
+**Exit:** The pre-implementation gates in the Phase 1 specification are resolved with physical-device evidence.
 
 ## Phase 1: Direct and three-phone relay
 
